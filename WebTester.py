@@ -25,8 +25,15 @@ def parse_uri(uri: str) -> dict:
     return {"protocol":protocol, "host":host, "port":int(port), "filepath":filepath}
  
 def open_connection(host: str, port: int, use_tls=False) -> socket:
+    # context = ssl.create_default_context()
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+    if use_tls:
+        context = ssl.create_default_context()
+        s = context.wrap_socket(s, server_hostname=host)
+        
     s.connect((host, port))
+
     return s
 
 def send_http_request(s: socket, request):
