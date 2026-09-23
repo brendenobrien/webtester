@@ -1,12 +1,8 @@
-# Must be able to do the following:
-# Confirm whether or not the web server support https
-# Cookie name, expiry time (if any), domain name (in any) of cookies that the web server will use
-# Whether or not the requested web page is password-protected
+# TODO: Integrate HTTP/2 Support
+# TODO: Handle Redirects
+# TODO: Read and store cookies
+# TODO: Detect password protected websites
 
-# First accept URI from stdin and process it.
-# Connect to the server
-# Send an HTTP request, and recieve an HTTP response
-# Print the response from the server, marking the header and body.
 import socket, ssl, sys
 
 def parse_uri(uri: str) -> dict:
