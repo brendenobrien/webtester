@@ -29,13 +29,12 @@ def open_connection(host: str, port: int, use_tls=False) -> socket:
 
     if use_tls:
         context = ssl.create_default_context()
-        # context.set_alpn_protocols(['http/1.1', 'h2'])
+        context.set_alpn_protocols(["http/1.1"])
         s = context.wrap_socket(s, server_hostname=host)
-        
+    
     s.connect((host, port))
-    # proto = s.selected_alpn_protocol()
-    # print(f"Negotiated Protocol: {proto}")
-
+    proto = s.selected_alpn_protocol()
+    print(f"Protocol Selected: {proto}")
     return s
 
 def send_http_request(s: socket, request, host):
@@ -61,16 +60,32 @@ def recieve_response(sock: socket):
         if not data:
             break;
         response += data
-    header, _, body = response.partition(b"\r\n\r\n")
-    print("/////////////////RESPONSE_HEADER//////////////////\n")
-    print(header.decode("ISO-8859-1"))
-    print("\n//////////////////RESPONSE_BODY///////////////////\n")
-    print(body.decode("ISO-8859-1"))
+    # print(body.decode
     sock.close()
     return response
 
-def parse_response(response):
-    pass;
+def parse_response(response: str) -> str:
+    header_data = {}
+    header_data["Cookies:"] = []
+    header, _, body = response.partition(b"\r\n\r\n")
+    header: str = header.decode("ISO-8859-1")
+    print(header)
+    for line in header.splitlines():
+        data = line.split()
+        match data[0]:
+            case "HTTP/1.1":
+                header_data["http_version"] = data[0]
+                header_data["status"] = int(data[1])
+            case "Location:":
+                header_data["redirect"] = data[1]
+            case "Set-Cookie:" if header_data["status"] is not 301 or 302:
+                cookie_data = ""
+                for i in range(1, len(data)):
+                    cookie_data += data[i]
+                header_data["Cookies:"].append(cookie_data)
+    print(header_data)
+    # print(header)
+    return header
 def handle_redirects():
     pass;
 def check_http2_support():
@@ -95,7 +110,6 @@ def main():
 
     send_http_request(s, uri_data["filepath"], uri_data["host"])
 
-    recieve_response(s)
-
+    parse_response(recieve_response(s))
 if __name__ == "__main__":
     main()
