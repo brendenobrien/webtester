@@ -1,6 +1,4 @@
 # TODO: Integrate HTTP/2 Support
-# TODO: Handle Redirects
-# TODO: Read and store cookies
 # TODO: Detect password protected websites
 
 import socket, ssl, sys
@@ -29,30 +27,23 @@ def open_connection(host: str, port: int, use_tls=False) -> socket:
 
     if use_tls:
         context = ssl.create_default_context()
-        context.set_alpn_protocols(["http/1.1"])
         s = context.wrap_socket(s, server_hostname=host)
     
     s.connect((host, port))
-    proto = s.selected_alpn_protocol()
-    print(f"Protocol Selected: {proto}")
+    # check_http2_support(s)
     return s
 
-def send_http_request(s: socket, request, host):
-
+def send_http_request(s: socket, path, host):
     request = (
-        f"GET {request} HTTP/1.1\r\n"
+        f"GET {path} HTTP/1.1\r\n"
         f"Host: {host}\r\n"
-        "Connection: close\r\n"
-        "\r\n"
+        "Connection: close\r\n\r\n"
     )
-    
     # send request
-
-    print("//////////////////////HEADER//////////////////////\n\n")
     print(request)
     s.sendall(request.encode())
 
-def recieve_response(sock: socket):
+def receive_response(sock: socket):
     response = b""
     # get response
     while True:
@@ -60,38 +51,69 @@ def recieve_response(sock: socket):
         if not data:
             break;
         response += data
-    # print(body.decode
+    # print(body.decode)
     sock.close()
     return response
 
-def parse_response(response: str) -> str:
+def parse_response(response: str) -> dict:
     header_data = {}
-    header_data["Cookies:"] = []
+    header_data["cookies"] = []
     header, _, body = response.partition(b"\r\n\r\n")
     header: str = header.decode("ISO-8859-1")
-    print(header)
-    for line in header.splitlines():
-        data = line.split()
-        match data[0]:
-            case "HTTP/1.1":
-                header_data["http_version"] = data[0]
-                header_data["status"] = int(data[1])
-            case "Location:":
-                header_data["redirect"] = data[1]
-            case "Set-Cookie:" if header_data["status"] is not 301 or 302:
-                cookie_data = ""
-                for i in range(1, len(data)):
-                    cookie_data += data[i]
-                header_data["Cookies:"].append(cookie_data)
+    #print(header)
+    lines = header.splitlines()
+    version_status_line = lines[0].split()
+    header_data["http_version"] = version_status_line[0]
+    header_data["status"] = version_status_line[1]
+    for line in lines[1:]:
+        name, value = line.split(":", 1)
+        value = value.strip()
+        match name:
+            case "Location":
+                header_data["redirect"] = value
+            case "Set-Cookie" if header_data["status"] not in (301, 302):
+                header_data["cookies"].append(value)
     print(header_data)
-    # print(header)
-    return header
-def handle_redirects():
-    pass;
-def check_http2_support():
-    pass;
-def extract_cookies(headers):
-    pass;
+    print(header)
+    print()
+    return header_data
+
+def handle_redirects(location: str) -> dict:
+    uri_data = parse_uri(location)
+    s = open_connection(uri_data["host"], uri_data["port"], True)
+    send_http_request(s, uri_data["filepath"], uri_data["host"])
+    header_data = parse_response(receive_response(s))
+    if not "redirect" in header_data:
+        return header_data
+    else:
+        return handle_redirects(header_data["redirect"])
+
+def check_http2_support(socket: ssl.SSLSocket):
+    proto = socket.selected_alpn_protocol()
+    print(f"Protocol Selected: {proto}")
+    return
+
+def extract_cookies(cookies: list) -> list:
+    extracted_cookies = []
+    for i in cookies:
+        cookie_data = {}
+        # print(i)
+        chunks = i.strip().split(";")
+        cookie_data["name"] = chunks[0].split("=")[0]
+        for j in chunks[1:]:
+            key, _, value = j.partition("=")
+            key = key.strip()
+            if key == "expires":
+                # print("test")
+                cookie_data["expires"] = value
+            elif key == "domain":
+                # print("test2")
+                cookie_data["domain"] = value
+
+        extracted_cookies.append(cookie_data)
+        print(cookie_data)
+    return extracted_cookies
+
 def check_password_protection(status_code):
     pass;
 
@@ -110,6 +132,10 @@ def main():
 
     send_http_request(s, uri_data["filepath"], uri_data["host"])
 
-    parse_response(recieve_response(s))
+    header_data = parse_response(receive_response(s))
+    if "redirect" in header_data:
+        header_data = handle_redirects(header_data["redirect"])
+    extract_cookies(header_data["cookies"])
+    
 if __name__ == "__main__":
     main()
