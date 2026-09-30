@@ -1,30 +1,35 @@
 # TODO: Integrate HTTP/2 Support
 # TODO: Detect password protected websites
+# TODO: Error Handling:
+# TODO: Remove hardcoding of "use_tls" in handle_redirects() and handle dynamically
 
 import socket, ssl, sys
 
 def parse_uri(uri: str) -> dict:
+    protocol = None
     # Grab protocol
-    protocol, uri = uri.split("://", 1)
-
+    if "://" in uri:
+        protocol, uri = uri.split("://")
+    
     # grab host, port and filepath
-    hostport, filepath = uri.split("/", 1)
+    hostport, _, filepath = uri.partition("/")
     filepath = "/" + filepath
 
-    # if port is included in uri
-    if ":" in hostport:
-        host, port = hostport.split(":", 1)
-
-    # if port is not in uri
+    # Assigns port if exists, if port doesnt exist then hostport just resolves into host
+    host, _, port = hostport.partition(":")
+    if port:
+        port = int(port)
+        if protocol is None:
+            protocol = "https" if port == 443 else "http" if port == 80 else ""
     else:
-        host = hostport
-        port = "80" if protocol == "http" else "443" if protocol == "https" else ""
+        if protocol is None:
+            protocol = "https"
+        port = 80 if protocol == "http" else 443
 
-    return {"protocol":protocol, "host":host, "port":int(port), "filepath":filepath}
+    return {"protocol":protocol, "host":host, "port":port, "filepath":filepath}
  
 def open_connection(host: str, port: int, use_tls=False) -> socket:
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
     if use_tls:
         context = ssl.create_default_context()
         s = context.wrap_socket(s, server_hostname=host)
@@ -40,6 +45,7 @@ def send_http_request(s: socket, path, host):
         "Connection: close\r\n\r\n"
     )
     # send request
+    print("~~~ Request ~~~")
     print(request)
     s.sendall(request.encode())
 
@@ -51,7 +57,6 @@ def receive_response(sock: socket):
         if not data:
             break;
         response += data
-    # print(body.decode)
     sock.close()
     return response
 
@@ -60,7 +65,6 @@ def parse_response(response: str) -> dict:
     header_data["cookies"] = []
     header, _, body = response.partition(b"\r\n\r\n")
     header: str = header.decode("ISO-8859-1")
-    #print(header)
     lines = header.splitlines()
     version_status_line = lines[0].split()
     header_data["http_version"] = version_status_line[0]
@@ -72,7 +76,8 @@ def parse_response(response: str) -> dict:
             header_data["redirect"] = value
         elif name == "Set-Cookie" and header_data["status"] not in (301, 302):
             header_data["cookies"].append(value)
-    print(header_data)
+    # print(header_data)
+    print("~~~ Response Header ~~~")
     print(header)
     print()
     return header_data
@@ -96,7 +101,7 @@ def extract_cookies(cookies: list) -> list:
     extracted_cookies = []
     for i in cookies:
         cookie_data = {}
-        # print(i)
+        print(i)
         chunks = i.strip().split(";")
         cookie_data["name"] = chunks[0].split("=")[0]
         for j in chunks[1:]:
@@ -110,7 +115,9 @@ def extract_cookies(cookies: list) -> list:
                 cookie_data["domain"] = value
 
         extracted_cookies.append(cookie_data)
-        print(cookie_data)
+    print("2. List of Cookies:")
+    for c in extracted_cookies:
+        print(c)
     return extracted_cookies
 
 def check_password_protection(status_code):
@@ -121,12 +128,11 @@ def main():
         raise ValueError("Must provide web server.");
 
     uri_data = parse_uri(sys.argv[1])
-    print(uri_data)
+    # print(uri_data)
 
-    if uri_data["protocol"] == "https":
+    try:
         s = open_connection(uri_data["host"], uri_data["port"], True)
-
-    elif uri_data["protocol"] == "http":
+    except OSError:
         s = open_connection(uri_data["host"], uri_data["port"])
 
     send_http_request(s, uri_data["filepath"], uri_data["host"])
