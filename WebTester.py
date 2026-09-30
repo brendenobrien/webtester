@@ -68,11 +68,10 @@ def parse_response(response: str) -> dict:
     for line in lines[1:]:
         name, value = line.split(":", 1)
         value = value.strip()
-        match name:
-            case "Location":
-                header_data["redirect"] = value
-            case "Set-Cookie" if header_data["status"] not in (301, 302):
-                header_data["cookies"].append(value)
+        if name == "Location":
+            header_data["redirect"] = value
+        elif name == "Set-Cookie" and header_data["status"] not in (301, 302):
+            header_data["cookies"].append(value)
     print(header_data)
     print(header)
     print()
