@@ -1,6 +1,3 @@
-# TODO: Error Handling:
-# TODO: Remove hardcoding of "use_tls" in handle_redirects() and handle dynamically
-
 import socket, ssl, sys
 
 def parse_uri(uri: str) -> dict:
@@ -28,11 +25,11 @@ def parse_uri(uri: str) -> dict:
  
 def open_connection(host: str, port: int, use_tls=False) -> socket:
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(5)
     if use_tls:
         context = ssl.create_default_context()
         s = context.wrap_socket(s, server_hostname=host)
     s.connect((host, port))
-    # check_http2_support(s)
     return s
 
 def send_http_request(s: socket, path, host):
@@ -92,26 +89,26 @@ def handle_redirects(current_protocol: str, current_host: str, current_port: int
     if not "redirect" in header_data:
         return header_data
     else:
-        return handle_redirects(header_data["redirect"], use_tls)
+        return handle_redirects(uri_data["protocol"], uri_data["host"], uri_data["port"], header_data["redirect"], use_tls)
 
 def check_http2_support(host: str, port: int=443) -> bool:
     context = ssl.create_default_context()
     context.set_alpn_protocols(["http/1.1", "h2"])
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(5)
         s = context.wrap_socket(s, server_hostname=host)
         s.connect((host, port))
         protocol = s.selected_alpn_protocol()
         s.close()
         return protocol == "h2";
-    except ssl.SSLError, OSError:
+    except (ssl.SSLError, OSError):
         return False
 
 def extract_cookies(cookies: list) -> list:
     extracted_cookies = []
     for i in cookies:
         cookie_data = {}
-        print(i)
         chunks = i.strip().split(";")
         cookie_data["name"] = chunks[0].split("=")[0]
         for j in chunks[1:]:
@@ -141,11 +138,11 @@ def main():
         use_tls = uri_data["protocol"] == "https"
         try:
             s = open_connection(uri_data["host"], uri_data["port"], use_tls)
-        except ssl.SSLError:
+        except (ssl.SSLError, ConnectionRefusedError, socket.timeout):
+            uri_data["protocol"] = "http"
+            uri_data["port"] = 80
+            use_tls = False
             s = open_connection(uri_data["host"], 80)        
-        except OSError:
-            print(f"Could not find a webpage with the hostname {uri_data["host"]}")
-            sys.exit(1)
         send_http_request(s, uri_data["filepath"], uri_data["host"])
         header_data = parse_response(receive_response(s))
         if "redirect" in header_data:
@@ -161,17 +158,21 @@ def main():
     except socket.timeout:
         print(f"ERROR: Did not receive a response from {uri_data['host']}")
         sys.exit(1)
+    except OSError as e:
+        print(f"ERROR: Could not connect to {uri_data['host']} ({e})")
+        sys.exit(1)
     cookie_list = extract_cookies(header_data["cookies"])
+    print("~~~ Results ~~~")
     print(f"Website: {sys.argv[1]}")
     print(f"1. Supports HTTP2: {http2_support}")
     if len(cookie_list) > 0:
         print(f"2. List of Cookies:")
         for c in cookie_list:
-            parts = [f"cookie name: {c["name"]}"]
+            parts = [f"cookie name: {c['name']}"]
             if "domain" in c:
-                parts.append(f"domain name: {c["domain"]}")
+                parts.append(f"domain name: {c['domain']}")
             if "expires" in c:
-                parts.append(f"expires time: {c["expires"]} ")
+                parts.append(f"expires time: {c['expires']} ")
             print(", ".join(parts))
     else:
         print("2. No Cookies Provided")
