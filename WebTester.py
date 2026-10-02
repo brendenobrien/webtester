@@ -33,7 +33,6 @@ def open_connection(host: str, port: int, use_tls=False) -> socket:
     if use_tls:
         context = ssl.create_default_context()
         s = context.wrap_socket(s, server_hostname=host)
-    
     s.connect((host, port))
     # check_http2_support(s)
     return s
@@ -42,7 +41,8 @@ def send_http_request(s: socket, path, host):
     request = (
         f"GET {path} HTTP/1.1\r\n"
         f"Host: {host}\r\n"
-        "Connection: close\r\n\r\n"
+        f"Connection: close\r\n"
+        f"\r\n"
     )
     # send request
     print("~~~ Request ~~~")
@@ -82,20 +82,29 @@ def parse_response(response: str) -> dict:
     print()
     return header_data
 
-def handle_redirects(location: str) -> dict:
+def handle_redirects(location: str, use_tls: bool) -> dict:
     uri_data = parse_uri(location)
-    s = open_connection(uri_data["host"], uri_data["port"], True)
+    s = open_connection(uri_data["host"], uri_data["port"], use_tls)
     send_http_request(s, uri_data["filepath"], uri_data["host"])
     header_data = parse_response(receive_response(s))
+    header_data["host"] = uri_data["host"]
     if not "redirect" in header_data:
         return header_data
     else:
-        return handle_redirects(header_data["redirect"])
+        return handle_redirects(header_data["redirect"], use_tls)
 
-def check_http2_support(socket: ssl.SSLSocket):
-    proto = socket.selected_alpn_protocol()
-    print(f"Protocol Selected: {proto}")
-    return
+def check_http2_support(host: str, port: int=443) -> bool:
+    context = ssl.create_default_context()
+    context.set_alpn_protocols(["http/1.1", "h2"])
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s = context.wrap_socket(s, server_hostname=host)
+        s.connect((host, port))
+        protocol = s.selected_alpn_protocol()
+        s.close()
+        return protocol == "h2";
+    except ssl.SSLError, OSError:
+        return False
 
 def extract_cookies(cookies: list) -> list:
     extracted_cookies = []
@@ -115,13 +124,10 @@ def extract_cookies(cookies: list) -> list:
                 cookie_data["domain"] = value
 
         extracted_cookies.append(cookie_data)
-    print("2. List of Cookies:")
-    for c in extracted_cookies:
-        print(c)
     return extracted_cookies
 
 def check_password_protection(status_code):
-    pass;
+    return status_code == "401"
 
 def main():
     if len(sys.argv) == 1:
@@ -131,16 +137,41 @@ def main():
     # print(uri_data)
 
     try:
-        s = open_connection(uri_data["host"], uri_data["port"], True)
-    except OSError:
-        s = open_connection(uri_data["host"], uri_data["port"])
-
-    send_http_request(s, uri_data["filepath"], uri_data["host"])
-
-    header_data = parse_response(receive_response(s))
-    if "redirect" in header_data:
-        header_data = handle_redirects(header_data["redirect"])
-    extract_cookies(header_data["cookies"])
-    
+        use_tls = uri_data["protocol"] == "https"
+        try:
+            s = open_connection(uri_data["host"], uri_data["port"], use_tls)
+        except ssl.SSLError:
+            s = open_connection(uri_data["host"], 80)
+        
+        send_http_request(s, uri_data["filepath"], uri_data["host"])
+        header_data = parse_response(receive_response(s))
+        if "redirect" in header_data:
+            header_data = handle_redirects(header_data["redirect"], use_tls)
+        pass_required = check_password_protection(header_data["status"])
+        if pass_required or not "host" in header_data:
+            http2_support = check_http2_support(uri_data["host"])
+        else:
+            http2_support = check_http2_support(header_data["host"])
+    except socket.gaierror:
+        print(f"ERROR: Could not find a website with the hostname {uri_data['host']}")
+        sys.exit(1)
+    except socket.timeout:
+        print(f"ERROR: Did not receive a response from {uri_data['host']}")
+        sys.exit(1)
+    cookie_list = extract_cookies(header_data["cookies"])
+    print(f"Website: {sys.argv[1]}")
+    print(f"1. Supports HTTP2: {http2_support}")
+    if len(cookie_list) > 0:
+        print(f"2. List of Cookies:")
+        for c in cookie_list:
+            parts = [f"cookie name: {c["name"]}"]
+            if "domain" in c:
+                parts.append(f"domain name: {c["domain"]}")
+            if "expires" in c:
+                parts.append(f"expires time: {c["expires"]} ")
+            print(", ".join(parts))
+    else:
+        print("2. No Cookies Provided")
+    print(f"3. Password Protected: {pass_required}")
 if __name__ == "__main__":
     main()
