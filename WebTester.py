@@ -1,5 +1,3 @@
-# TODO: Integrate HTTP/2 Support
-# TODO: Detect password protected websites
 # TODO: Error Handling:
 # TODO: Remove hardcoding of "use_tls" in handle_redirects() and handle dynamically
 
@@ -82,8 +80,11 @@ def parse_response(response: str) -> dict:
     print()
     return header_data
 
-def handle_redirects(location: str, use_tls: bool) -> dict:
+def handle_redirects(current_protocol: str, current_host: str, current_port: int, location: str, use_tls: bool) -> dict:
+    if location.startswith("/"):
+        location = f"{current_protocol}://{current_host}:{current_port}/{location}"
     uri_data = parse_uri(location)
+    use_tls = uri_data["protocol"] == "https"
     s = open_connection(uri_data["host"], uri_data["port"], use_tls)
     send_http_request(s, uri_data["filepath"], uri_data["host"])
     header_data = parse_response(receive_response(s))
@@ -141,12 +142,14 @@ def main():
         try:
             s = open_connection(uri_data["host"], uri_data["port"], use_tls)
         except ssl.SSLError:
-            s = open_connection(uri_data["host"], 80)
-        
+            s = open_connection(uri_data["host"], 80)        
+        except OSError:
+            print(f"Could not find a webpage with the hostname {uri_data["host"]}")
+            sys.exit(1)
         send_http_request(s, uri_data["filepath"], uri_data["host"])
         header_data = parse_response(receive_response(s))
         if "redirect" in header_data:
-            header_data = handle_redirects(header_data["redirect"], use_tls)
+            header_data = handle_redirects(uri_data["protocol"], uri_data["host"], uri_data["port"], header_data["redirect"], use_tls)
         pass_required = check_password_protection(header_data["status"])
         if pass_required or not "host" in header_data:
             http2_support = check_http2_support(uri_data["host"])
